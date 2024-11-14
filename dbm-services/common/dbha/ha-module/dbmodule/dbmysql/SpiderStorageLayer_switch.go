@@ -14,6 +14,7 @@
 package dbmysql
 
 import (
+	"dbm-services/common/dbha/ha-module/util"
 	"fmt"
 
 	"dbm-services/common/dbha/ha-module/client"
@@ -80,33 +81,50 @@ func (ins *SpiderStorageSwitch) CheckSwitch() (bool, error) {
 // 1. connect primary tdbctl and update route
 // 2. flush routing
 func (ins *SpiderStorageSwitch) DoSwitch() error {
-	//set primary, set all route info
-	ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("get all route table before switch"))
-	if err := ins.SetRoutes(); err != nil {
+	//1. get primary tdbctl node
+	ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("get primary tdbctl node before switch"))
+
+	//2. set all spider nodes
+	if err := ins.SetSpiderNodes(); err != nil {
 		return err
 	}
-	ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("old master[%s#%d], old slave[%s#%d]",
-		ins.Ip, ins.Port, ins.StandBySlave.Ip, ins.StandBySlave.Port))
-	oldMaster := ins.GetRouteInfo(ins.Ip, ins.Port)
-	newMaster := ins.GetRouteInfo(ins.StandBySlave.Ip, ins.StandBySlave.Port)
-	if oldMaster == nil || newMaster == nil {
-		ins.ReportLogs(constvar.FailResult, "get master/slave's route failed")
-		return fmt.Errorf("no master/slave's record found in route table")
+
+	//3. get all route from primary node
+	if err := ins.GetPrimary(); err != nil {
+		ins.ReportLogs(constvar.FailResult, "get primary node failed")
+		return err
 	}
 
-	//connect to primary tdbctl
-	log.Logger.Debugf("connect to primary tdbctl")
-	primaryConn, err := ins.ConnectPrimaryTdbctl()
+	log.Logger.Debugf("try to connect to primary tdbctl")
+	primaryConn, err := ins.ConnectInstance(ins.PrimaryTdbctl.Host, ins.PrimaryTdbctl.Port)
 	if err != nil {
-		return fmt.Errorf("connect to primary tdbctl[%s#%d] failed:%s",
-			ins.PrimaryTdbctl.Host, ins.PrimaryTdbctl.Port, err.Error())
+		return err
 	}
 	defer func() {
 		_ = primaryConn.Close()
 	}()
 
+	ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("get all route table from primary node before switch"))
+	if ins.RouteTable, err = ins.QueryRouteInfo(primaryConn); err != nil {
+		_ = primaryConn.Close()
+		return fmt.Errorf("get all route info failed:%s", err.Error())
+	}
+	ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("get all route table info success:%s",
+		util.GraceStructString(ins.RouteTable)))
+
+	//4. get standby slave
+	ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("old master[%s#%d], old slave[%s#%d]",
+		ins.Ip, ins.Port, ins.StandBySlave.Ip, ins.StandBySlave.Port))
+	oldMaster := ins.GetNodeRoute(ins.Ip, ins.Port)
+	newMaster := ins.GetNodeRoute(ins.StandBySlave.Ip, ins.StandBySlave.Port)
+	if oldMaster == nil || newMaster == nil {
+		ins.ReportLogs(constvar.FailResult, "get master/slave's route failed")
+		return fmt.Errorf("no master/slave's record found in route table")
+	}
+
+	//5. do reset slave
 	ins.ReportLogs(constvar.InfoResult, "try to reset slave")
-	binlogFile, binlogPosition, err := ins.ResetSlave()
+	binlogFile, binlogPosition, err := ins.ResetSlaveExtend(ins.StandBySlave.Ip, ins.StandBySlave.Port)
 	if err != nil {
 		ins.ReportLogs(constvar.FailResult, fmt.Sprintf("reset slave failed:%s", err.Error()))
 		return fmt.Errorf("reset slave failed")
@@ -116,6 +134,7 @@ func (ins *SpiderStorageSwitch) DoSwitch() error {
 	ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("reset slave success, consistent binlog info:%s,%d",
 		ins.StandBySlave.BinlogFile, ins.StandBySlave.BinlogPosition))
 
+	//6. update route info
 	ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("try to update route from old master to new master"))
 	alterSQL := fmt.Sprintf(AlterNodeFormat, oldMaster.ServerName, newMaster.Host,
 		newMaster.UserName, newMaster.Password, newMaster.Port)
@@ -129,9 +148,10 @@ func (ins *SpiderStorageSwitch) DoSwitch() error {
 	}
 	ins.ReportLogs(constvar.InfoResult, "update route info success, do flush next")
 
-	if _, err = primaryConn.Exec(FlushRouteSQL); err != nil {
+	//7. flush routing
+	if _, err = primaryConn.Exec(FlushRouteForceSQL); err != nil {
 		ins.ReportLogs(constvar.FailResult, fmt.Sprintf("flush route failed:%s", err.Error()))
-		return fmt.Errorf("execute[%s] failed:%s", FlushRouteSQL, err.Error())
+		return fmt.Errorf("execute[%s] failed:%s", FlushRouteForceSQL, err.Error())
 	}
 	ins.ReportLogs(constvar.InfoResult, "flush route ok, switch success")
 

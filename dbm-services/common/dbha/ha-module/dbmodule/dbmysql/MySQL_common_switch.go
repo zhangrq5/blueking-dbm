@@ -13,6 +13,7 @@ package dbmysql
 
 import (
 	"database/sql"
+	"dbm-services/common/dbha/ha-module/util"
 	"dbm-services/common/dbha/hadb-api/model"
 	"encoding/json"
 	"fmt"
@@ -29,19 +30,43 @@ import (
 	"gorm.io/gorm"
 )
 
+// node role type in information_schema.TDBCTL_NODES
+const (
+	// PrimaryRole SHOW SLAVE STATUS no replication info and tc_is_primary is 1
+	PrimaryRole = "primary"
+	// SecondaryRole SHOW SLAVE STATUS with replication info and tc_is_primary is 0
+	SecondaryRole = "Secondary"
+	// StandaloneRole SHOW SLAVE STATUS without replication info and tc_is_primary is 0
+	StandaloneRole = "Standalone"
+	// FalsePrimaryRole SHOW SLAVE STATUS with replication info and tc_is_primary is 1
+	FalsePrimaryRole = "FalsePrimary"
+	// UnknownROle no tc_is_primary variable found
+	UnknownROle = "Unknown"
+)
+
+// node status in information_schema.TDBCTL_NODES
+const (
+	StatusOnline      = "Online"
+	StatusOffline     = "Offline "
+	StatusUnreachable = "Unreachable"
+	StatusErr         = "Error"
+)
+
+// command on TDBCTL Node Server
 const (
 	// GetPrimarySQL sql to get primary tdbctl
 	GetPrimarySQL = "TDBCTL GET PRIMARY"
 	// GetRouteSQL TendbCluster used to get all routes
 	GetRouteSQL = "SELECT Server_name, Host, Username, Password, Port, Wrapper FROM mysql.servers"
-	//FlushRouteSQL TendbCluster used to flush routes
-	FlushRouteSQL = "TDBCTL FLUSH ROUTING FORCE"
+	//FlushRouteForceSQL TendbCluster used to flush routes
+	FlushRouteForceSQL = "TDBCTL FLUSH ROUTING FORCE"
 	// ForcePrimarySQL enable primary tdbctl force
 	ForcePrimarySQL = "TDBCTL ENABLE PRIMARY FORCE"
 	// AlterNodeFormat TDBCTL alter node sql format
 	AlterNodeFormat = "TDBCTL ALTER NODE %s OPTIONS(HOST '%s',USER '%s',PASSWORD '%s', Port %d)"
 	// DropNodeFormat TDBCTL drop node sql format, valid string is server_name
 	DropNodeFormat = "TDBCTL DROP NODE %s"
+	GetNodeSQL     = "select * from information_schema.TDBCTL_NODES"
 )
 
 // MySQLCommonSwitch defined mysql-related switch struct
@@ -61,7 +86,7 @@ type MySQLCommonSwitchUtil interface {
 	GetSlaveCheckSum() (int, int, error)
 	GetSlaveDelay() (int, int, error)
 	FindUsefulDatabase() (bool, error)
-	CheckSlaveSlow(bool) error
+	CheckSlaveSlow() error
 	ResetSlave() (string, uint64, error)
 	SetStandbySlave([]dbutil.SlaveInfo)
 
@@ -74,11 +99,16 @@ type MySQLCommonSwitchUtil interface {
 // TenDBCluster special specify, spider/remote usual include this
 type SpiderCommonSwitch struct {
 	MySQLCommonSwitch
-	//primary tdbctl info
-	PrimaryTdbctl TdbctlInfo
-	ClusterName   string
-	//all node's route info, must fill by any-tdbctl
+	//cluster domain in dbmeta
+	ClusterName string
+	//all spider instances in dbmeta
+	SpiderNodes []dbutil.DBInstanceInfoDetail
+	//route table in tdbctl node
 	RouteTable []RouteInfo
+	//primary tdbctl info, if primary node broken-down, may unusable
+	PrimaryTdbctl *TdbctlInfo
+	//only primary broken-down and elect success, this should be non-nil
+	NewPrimaryTdbctl *TdbctlInfo
 }
 
 // DelayInfo defined slave delay info
@@ -109,61 +139,61 @@ type BinlogStatus struct {
 
 // SlaveStatus show slave status info struct
 type SlaveStatus struct {
-	SlaveIoState               string `gorm:"column:Slave_IO_State"`
-	MasterHost                 string `gorm:"column:Master_Host"`
-	MasterUser                 string `gorm:"column:Master_User"`
-	MasterPort                 int    `gorm:"column:Master_Port"`
-	ConnectRetry               int    `gorm:"column:Connect_Retry"`
-	MasterLogFile              string `gorm:"column:Master_Log_File"`
-	ReadMasterLogPos           uint64 `gorm:"column:Read_Master_Log_Pos"`
-	RelayLogFile               string `gorm:"column:Relay_Log_File"`
-	RelayLogPos                uint64 `gorm:"column:Relay_Log_Pos"`
-	RelayMasterLogFile         string `gorm:"column:Relay_Master_Log_File"`
-	SlaveIoRunning             string `gorm:"column:Slave_IO_Running"`
-	SlaveSqlRunning            string `gorm:"column:Slave_SQL_Running"`
-	ReplicateDoDb              string `gorm:"column:Replicate_Do_DB"`
-	ReplicateIgnoreDb          string `gorm:"column:Replicate_Ignore_DB"`
-	ReplicateDoTable           string `gorm:"column:Replicate_Do_Table"`
-	ReplicateIgnoreTable       string `gorm:"column:Replicate_Ignore_Table"`
-	ReplicateWildDoTable       string `gorm:"column:Replicate_Wild_Do_Table"`
-	ReplicateWildIgnoreTable   string `gorm:"column:Replicate_Wild_Ignore_Table"`
-	LastErrno                  int    `gorm:"column:Last_Errno"`
-	LastError                  string `gorm:"column:Last_Error"`
-	SkipCounter                int    `gorm:"column:Skip_Counter"`
-	ExecMasterLogPos           uint64 `gorm:"column:Exec_Master_Log_Pos"`
-	RelayLogSpace              uint64 `gorm:"column:Relay_Log_Space"`
-	UntilCondition             string `gorm:"column:Until_Condition"`
-	UntilLogFile               string `gorm:"column:Until_Log_File"`
-	UntilLogPos                uint64 `gorm:"column:Until_Log_Pos"`
-	MasterSslAllowed           string `gorm:"column:Master_SSL_Allowed"`
-	MasterSslCaFile            string `gorm:"column:Master_SSL_CA_File"`
-	MasterSslCaPath            string `gorm:"column:Master_SSL_CA_Path"`
-	MasterSslCert              string `gorm:"column:Master_SSL_Cert"`
-	MasterSslCipher            string `gorm:"column:Master_SSL_Cipher"`
-	MasterSslKey               string `gorm:"column:Master_SSL_Key"`
-	SecondsBehindMaster        int    `gorm:"column:Seconds_Behind_Master"`
-	MasterSslVerifyServerCert  string `gorm:"column:Master_SSL_Verify_Server_Cert"`
-	LastIoErrno                int    `gorm:"column:Last_IO_Errno"`
-	LastIoError                string `gorm:"column:Last_IO_Error"`
-	LastSqlErrno               int    `gorm:"column:Last_SQL_Errno"`
-	LastSqlError               string `gorm:"column:Last_SQL_Error"`
-	ReplicateIgnoreServerIds   string `gorm:"column:Replicate_Ignore_Server_Ids"`
-	MasterServerId             uint64 `gorm:"column:Master_Server_Id"`
-	MasterUuid                 string `gorm:"column:Master_UUID"`
-	MasterInfoFile             string `gorm:"column:Master_Info_File"`
-	SqlDelay                   uint64 `gorm:"column:SQL_Delay"`
-	SqlRemainingDelay          string `gorm:"column:SQL_Remaining_Delay"`
-	SlaveSqlRunningState       string `gorm:"column:Slave_SQL_Running_State"`
-	MasterRetryCount           int    `gorm:"column:Master_Retry_Count"`
-	MasterBind                 string `gorm:"column:Master_Bind"`
-	LastIoErrorTimestamp       string `gorm:"column:Last_IO_Error_Timestamp"`
-	LastSqlErrorTimestamp      string `gorm:"column:Last_SQL_Error_Timestamp"`
-	MasterSslCrl               string `gorm:"column:Master_SSL_Crl"`
-	MasterSslCrlpath           string `gorm:"column:Master_SSL_Crlpath"`
-	RetrievedGtidSet           string `gorm:"column:Retrieved_Gtid_Set"`
-	ExecutedGtidSet            string `gorm:"column:Executed_Gtid_Set"`
-	AutoPosition               string `gorm:"column:Auto_Position"`
-	ReplicateWildParallelTable string `gorm:"column:Replicate_Wild_Parallel_Table"`
+	SlaveIoState               string `gorm:"column:Slave_IO_State" json:"Slave_IO_State"`
+	MasterHost                 string `gorm:"column:Master_Host" json:"Master_Host"`
+	MasterUser                 string `gorm:"column:Master_User" json:"Master_User"`
+	MasterPort                 int    `gorm:"column:Master_Port" json:"Master_Port"`
+	ConnectRetry               int    `gorm:"column:Connect_Retry" json:"Connect_Retry"`
+	MasterLogFile              string `gorm:"column:Master_Log_File" json:"Master_Log_File"`
+	ReadMasterLogPos           uint64 `gorm:"column:Read_Master_Log_Pos" json:"Read_Master_Log_Pos"`
+	RelayLogFile               string `gorm:"column:Relay_Log_File" json:"Relay_Log_File"`
+	RelayLogPos                uint64 `gorm:"column:Relay_Log_Pos" json:"Relay_Log_Pos"`
+	RelayMasterLogFile         string `gorm:"column:Relay_Master_Log_File" json:"Relay_Master_Log_File"`
+	SlaveIoRunning             string `gorm:"column:Slave_IO_Running" json:"Slave_IO_Running"`
+	SlaveSqlRunning            string `gorm:"column:Slave_SQL_Running" json:"Slave_SQL_Running"`
+	ReplicateDoDb              string `gorm:"column:Replicate_Do_DB" json:"Replicate_Do_DB"`
+	ReplicateIgnoreDb          string `gorm:"column:Replicate_Ignore_DB" json:"Replicate_Ignore_DB"`
+	ReplicateDoTable           string `gorm:"column:Replicate_Do_Table" json:"Replicate_Do_Table"`
+	ReplicateIgnoreTable       string `gorm:"column:Replicate_Ignore_Table" json:"Replicate_Ignore_Table"`
+	ReplicateWildDoTable       string `gorm:"column:Replicate_Wild_Do_Table" json:"Replicate_Wild_Do_Table"`
+	ReplicateWildIgnoreTable   string `gorm:"column:Replicate_Wild_Ignore_Table" json:"Replicate_Wild_Ignore_Table"`
+	LastErrno                  int    `gorm:"column:Last_Errno" json:"Last_Errno"`
+	LastError                  string `gorm:"column:Last_Error" json:"Last_Error"`
+	SkipCounter                int    `gorm:"column:Skip_Counter" json:"Skip_Counter"`
+	ExecMasterLogPos           uint64 `gorm:"column:Exec_Master_Log_Pos" json:"Exec_Master_Log_Pos"`
+	RelayLogSpace              uint64 `gorm:"column:Relay_Log_Space" json:"Relay_Log_Space"`
+	UntilCondition             string `gorm:"column:Until_Condition" json:"Until_Condition"`
+	UntilLogFile               string `gorm:"column:Until_Log_File" json:"Until_Log_File"`
+	UntilLogPos                uint64 `gorm:"column:Until_Log_Pos" json:"Until_Log_Pos"`
+	MasterSslAllowed           string `gorm:"column:Master_SSL_Allowed" json:"Master_SSL_Allowed"`
+	MasterSslCaFile            string `gorm:"column:Master_SSL_CA_File" json:"Master_SSL_CA_File"`
+	MasterSslCaPath            string `gorm:"column:Master_SSL_CA_Path" json:"Master_SSL_CA_Path"`
+	MasterSslCert              string `gorm:"column:Master_SSL_Cert" json:"Master_SSL_Cert"`
+	MasterSslCipher            string `gorm:"column:Master_SSL_Cipher" json:"Master_SSL_Cipher"`
+	MasterSslKey               string `gorm:"column:Master_SSL_Key" json:"Master_SSL_Key"`
+	SecondsBehindMaster        int    `gorm:"column:Seconds_Behind_Master" json:"Seconds_Behind_Master"`
+	MasterSslVerifyServerCert  string `gorm:"column:Master_SSL_Verify_Server_Cert" json:"Master_SSL_Verify_Server_Cert"`
+	LastIoErrno                int    `gorm:"column:Last_IO_Errno" json:"Last_IO_Errno"`
+	LastIoError                string `gorm:"column:Last_IO_Error" json:"Last_IO_Error"`
+	LastSqlErrno               int    `gorm:"column:Last_SQL_Errno" json:"Last_SQL_Errno"`
+	LastSqlError               string `gorm:"column:Last_SQL_Error" json:"Last_SQL_Error"`
+	ReplicateIgnoreServerIds   string `gorm:"column:Replicate_Ignore_Server_Ids" json:"Replicate_Ignore_Server_Ids"`
+	MasterServerId             uint64 `gorm:"column:Master_Server_Id" json:"Master_Server_Id"`
+	MasterUuid                 string `gorm:"column:Master_UUID" json:"Master_UUID"`
+	MasterInfoFile             string `gorm:"column:Master_Info_File" json:"Master_Info_File"`
+	SqlDelay                   uint64 `gorm:"column:SQL_Delay" json:"SQL_Delay"`
+	SqlRemainingDelay          string `gorm:"column:SQL_Remaining_Delay" json:"SQL_Remaining_Delay"`
+	SlaveSqlRunningState       string `gorm:"column:Slave_SQL_Running_State" json:"Slave_SQL_Running_State"`
+	MasterRetryCount           int    `gorm:"column:Master_Retry_Count" json:"Master_Retry_Count"`
+	MasterBind                 string `gorm:"column:Master_Bind" json:"Master_Bind"`
+	LastIoErrorTimestamp       string `gorm:"column:Last_IO_Error_Timestamp" json:"Last_IO_Error_Timestamp"`
+	LastSqlErrorTimestamp      string `gorm:"column:Last_SQL_Error_Timestamp" json:"Last_SQL_Error_Timestamp"`
+	MasterSslCrl               string `gorm:"column:Master_SSL_Crl" json:"Master_SSL_Crl"`
+	MasterSslCrlpath           string `gorm:"column:Master_SSL_Crlpath" json:"Master_SSL_Crlpath"`
+	RetrievedGtidSet           string `gorm:"column:Retrieved_Gtid_Set" json:"Retrieved_Gtid_Set"`
+	ExecutedGtidSet            string `gorm:"column:Executed_Gtid_Set" json:"Executed_Gtid_Set"`
+	AutoPosition               string `gorm:"column:Auto_Position" json:"Auto_Position"`
+	ReplicateWildParallelTable string `gorm:"column:Replicate_Wild_Parallel_Table" json:"Replicate_Wild_Parallel_Table"`
 }
 
 // RouteInfo route in mysql.servers
@@ -176,13 +206,38 @@ type RouteInfo struct {
 	Wrapper    string `gorm:"column:Wrapper"`
 }
 
-// TdbctlInfo for tdbctl node
+// TdbctlInfo for tdbctl get primary node
 type TdbctlInfo struct {
 	ServerName string `gorm:"column:SERVER_NAME"`
 	Host       string `gorm:"column:HOST"`
 	Port       int    `gorm:"column:PORT"`
-	//if 1, indicate this server is primary
+	/* if 1, indicate this server is primary
+	only primary node broken-down trigger elect
+	*/
 	CurrentServer int `gorm:"column:IS_THIS_SERVER"`
+}
+
+// TdbctlNodes for information_schema.TDBCTL_NODES
+type TdbctlNodes struct {
+	ServerName        string `gorm:"column:SERVER_NAME;NOT NULL"`
+	Host              string `gorm:"column:HOST;NOT NULL"`
+	Port              int    `gorm:"column:PORT;default:0;NOT NULL"`
+	ReplicationMaster string `gorm:"column:REPLICATION_MASTER;NOT NULL"`
+	ClusterRole       string `gorm:"column:CLUSTER_ROLE;NOT NULL"`
+	Status            string `gorm:"column:STATUS;NOT NULL"`
+	Message           string `gorm:"column:MESSAGE;NOT NULL"`
+	ReplicationInfo   string `gorm:"column:REPLICATION_INFO;NOT NULL"`
+}
+
+// ReplicationInfo replication info in information_schema.TDBCTL_NODES's ReplicationInfo field
+type ReplicationInfo struct {
+	MasterHost         string `json:"Master_Host"`
+	MasterPort         int    `json:"Master_Port"`
+	RelayMasterLogFile string `json:"Relay_Master_Log_File"`
+	SlaveIoRunning     string `json:"Slave_IO_Running"`
+	SlaveSqlRunning    string `json:"Slave_SQL_Running"`
+	//TODO: in the future, type should change to uint64
+	ExecMasterLogPos string `json:"Exec_Master_Log_Pos"`
 }
 
 // SetStandbySlave only master instance could call this.
@@ -304,7 +359,7 @@ func (ins *MySQLCommonSwitch) CheckSlaveStatus() error {
 		slaveDelay, gmConf.GCM.AllowedSlaveDelayMax))
 
 	if timeDelay >= gmConf.GCM.AllowedTimeDelayMax {
-		return fmt.Errorf("heartbeat delay on slave too large than master(%d >= %d)", timeDelay,
+		return fmt.Errorf("IO_Thread delay on slave too large than master(%d >= %d)", timeDelay,
 			gmConf.GCM.AllowedTimeDelayMax)
 	}
 	ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("IO_Thread delay [%d] in allowed range[%d]",
@@ -576,10 +631,15 @@ type MasterStatus struct {
 	ExecutedGtidSet string
 }
 
-// ResetSlave do reset slave
-func (ins *MySQLCommonSwitch) ResetSlave() (string, uint64, error) {
-	slaveIp := ins.StandBySlave.Ip
-	slavePort := ins.StandBySlave.Port
+func (ins *MySQLCommonSwitch) ConnectInstance(host string, port int) (*sql.DB, error) {
+	dbConf := ins.Config.DBConf.MySQL
+	connParam := fmt.Sprintf("%s:%s@(%s:%d)/%s",
+		dbConf.User, dbConf.Pass, host, port, constvar.DefaultDatabase)
+	return dbutil.ConnMySQL(connParam)
+}
+
+// ResetSlaveExtend do reset slave and save consistent binlog info
+func (ins *MySQLCommonSwitch) ResetSlaveExtend(slaveIp string, slavePort int) (string, uint64, error) {
 	user := ins.Config.DBConf.MySQL.User
 	pass := ins.Config.DBConf.MySQL.Pass
 	log.Logger.Infof("gonna RESET SLAVE on %s:%d", slaveIp, slavePort)
@@ -592,9 +652,13 @@ func (ins *MySQLCommonSwitch) ResetSlave() (string, uint64, error) {
 		log.Logger.Errorf("open mysql failed. ip:%s, port:%d, err:%s", slaveIp, slavePort, err.Error())
 		return "", 0, err
 	}
+	defer func() {
+		if conn, err := db.DB(); err != nil {
+			_ = conn.Close()
+		}
+	}()
 
 	stopSql := "stop slave"
-	slaveSql := "show slave status"
 	masterSql := "show master status"
 	resetSql := "reset slave /*!50516 all */"
 
@@ -603,16 +667,6 @@ func (ins *MySQLCommonSwitch) ResetSlave() (string, uint64, error) {
 		return "", 0, fmt.Errorf("stop slave failed. err:%s", err.Error())
 	}
 	log.Logger.Infof("execute %s success", stopSql)
-
-	slaveStatus := SlaveStatus{}
-	err = db.Raw(slaveSql).Scan(&slaveStatus).Error
-	if err != nil {
-		log.Logger.Warnf("show slave status failed. err:%s", err.Error())
-	} else {
-		log.Logger.Debugf("slave status info:%v", slaveStatus)
-		ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("after stop slave, binlog binlog_file:%s, "+
-			"binlog_pos:%d", slaveStatus.RelayMasterLogFile, slaveStatus.ExecMasterLogPos))
-	}
 
 	var masterStatus MasterStatus
 	err = db.Raw(masterSql).Scan(&masterStatus).Error
@@ -626,11 +680,62 @@ func (ins *MySQLCommonSwitch) ResetSlave() (string, uint64, error) {
 	if err != nil {
 		return "", 0, fmt.Errorf("reset slave failed. err:%s", err.Error())
 	}
-	log.Logger.Infof("executed %s on %s:%d successd", resetSql, slaveIp, slavePort)
+	log.Logger.Infof("executed %s on %s:%d successed", resetSql, slaveIp, slavePort)
 	ins.SetInfo(constvar.BinlogFile, masterStatus.File)
 	ins.SetInfo(constvar.BinlogPos, masterStatus.Position)
 
 	return masterStatus.File, masterStatus.Position, nil
+}
+
+// ChangeMasterAuto do reset slave and save consistent binlog info
+func (ins *MySQLCommonSwitch) ChangeMasterAuto(slaveIp string, slavePort int, changeSql string) error {
+	user := ins.Config.DBConf.MySQL.User
+	pass := ins.Config.DBConf.MySQL.Pass
+
+	ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("try to connect node:%s#%d", slaveIp, slavePort))
+	connParam := fmt.Sprintf("%s:%s@(%s:%d)/%s", user, pass, slaveIp, slavePort, "infodba_schema")
+	db, err := gorm.Open(mysql.Open(connParam), &gorm.Config{
+		Logger: log.GormLogger,
+	})
+	if err != nil {
+		log.Logger.Errorf("open mysql failed. ip:%s, port:%d, err:%s", slaveIp, slavePort, err.Error())
+		return err
+	}
+	defer func() {
+		if conn, err := db.DB(); err != nil {
+			_ = conn.Close()
+		}
+	}()
+
+	ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("node:%s#%d do stop slave", slaveIp, slavePort))
+	err = db.Exec("stop slave").Error
+	if err != nil {
+		return fmt.Errorf("stop slave failed. err:%s", err.Error())
+	}
+	ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("node:%s#%d do stop slave success", slaveIp, slavePort))
+
+	var slaveStatus SlaveStatus
+	err = db.Raw("show slave status").Scan(&slaveStatus).Error
+	if err != nil {
+		return fmt.Errorf("show master status failed, err:%s", err.Error())
+	}
+	ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("before change to new master, binlog_file:%s, "+
+		"binlog_pos:%d", slaveStatus.RelayMasterLogFile, slaveStatus.ExecMasterLogPos))
+
+	err = db.Exec(changeSql).Error
+	if err != nil {
+		return fmt.Errorf("do change master sql failed:%s", err.Error())
+	}
+	ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("node:%s#%d do CHANGE SQL success", slaveIp, slavePort))
+
+	err = db.Exec("start slave").Error
+	if err != nil {
+		return fmt.Errorf("do START SLAVE failed:%s", err.Error())
+	}
+
+	ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("node:%s#%d execute START SLAVE success", slaveIp, slavePort))
+
+	return nil
 }
 
 // UpdateMetaInfo swap master, slave 's meta info in cmdb
@@ -638,123 +743,8 @@ func (ins *MySQLCommonSwitch) UpdateMetaInfo() error {
 	return nil
 }
 
-// SetRoutes set switch instance's route info
-// 1.set primary tdbctl(here only set the raw primary, even if it already broken-down)
-// 2.set all nodes' route info
-// 1). use cluster name fetch all spider-master instance, include itself(broken-down)
-// 2). connect any-other tdbctl, execute 'TDBCTL GET PRIMARY' to get primary node
-// TDBCTL GET PRIMARY sql return result example:
-// +-------------+------------+------+----------------+
-// | SERVER_NAME | HOST       | PORT | IS_THIS_SERVER |
-// +-------------+------------+------+----------------+
-// | TDBCTL0     | 127.0.0.1  | 3306 |              1 |
-// +-------------+------------+------+----------------+
-// NB: gorm's func may abnormal for some tdbctl command(its bug?), so all db operator should
-// use sql.DB at present
-func (ins *SpiderCommonSwitch) SetRoutes() error {
-	foundPrimary := false
-	dbConf := ins.Config.DBConf.MySQL
-	cmdbClient := client.NewCmDBClient(&ins.Config.DBConf.CMDB, ins.Config.GetCloudId())
-	rawData, err := cmdbClient.GetDBInstanceInfoByCluster(ins.ClusterName)
-	if err != nil {
-		return fmt.Errorf("get all cluster instance info failed:%s", err.Error())
-	}
-
-	for _, v := range rawData {
-		cmdbIns := dbutil.DBInstanceInfoDetail{}
-		rawIns, jsonErr := json.Marshal(v)
-		if jsonErr != nil {
-			return fmt.Errorf("get tdbctl primary failed:%s", jsonErr.Error())
-		}
-		if jsonErr = json.Unmarshal(rawIns, &cmdbIns); jsonErr != nil {
-			return fmt.Errorf("get tdbctl primary failed:%s", jsonErr.Error())
-		}
-		//only spider-master had tdbctl node, should connect use admin port
-		if !foundPrimary && cmdbIns.SpiderRole == constvar.TenDBClusterProxyMaster &&
-			cmdbIns.Status != constvar.UNAVAILABLE {
-			primaryTdbctl := TdbctlInfo{}
-			//skip connect itself(already broken-down)
-			if cmdbIns.IP == ins.Ip && cmdbIns.Port == ins.Port {
-				continue
-			}
-
-			//try to connect a tdbctl node, and get primary tdbctl
-			log.Logger.Debugf("try to connect tdbctl and get primary:%s#%d", cmdbIns.IP, cmdbIns.AdminPort)
-			connParam := fmt.Sprintf("%s:%s@(%s:%d)/%s",
-				dbConf.User, dbConf.Pass, cmdbIns.IP, cmdbIns.AdminPort, constvar.DefaultDatabase)
-			if currentConn, connErr := dbutil.ConnMySQL(connParam); connErr != nil {
-				log.Logger.Warnf("connect tdbctl[%s#%d] failed:%s, retry others",
-					cmdbIns.IP, cmdbIns.AdminPort, connErr.Error())
-				//connect failed, try another
-				continue
-			} else {
-				//get primary tdbctl from connected tdbctl
-				//TODO: gorm bug? must use sql.DB instead here
-				if err = currentConn.QueryRow(GetPrimarySQL).Scan(&primaryTdbctl.ServerName,
-					&primaryTdbctl.Host, &primaryTdbctl.Port, &primaryTdbctl.CurrentServer); err != nil {
-					log.Logger.Warnf("execute [%s] failed:%s", GetPrimarySQL, err.Error())
-					_ = currentConn.Close()
-					ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("get primary tdbctl failed:%s,"+
-						"try others", err.Error()))
-					continue
-				}
-
-				//if primary tdbctl break-down: try to get all route from any-other(current connected) tdbctl;
-				//if non-primary tdbctl broken-down:
-				// 1)current connected tdbctl is primary, get all route directly
-				// 2)otherwise, get all route from real primary tdbctl.
-				ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("get primary tdbctl success, info:%s#%d",
-					primaryTdbctl.Host, primaryTdbctl.Port))
-
-				foundPrimary = true
-				primaryConn := currentConn
-				ins.PrimaryTdbctl = primaryTdbctl
-				//check whether breakdown node is primary tdbctl
-				if primaryTdbctl.Host == ins.Ip && primaryTdbctl.Port == cmdbIns.AdminPort {
-					ins.ReportLogs(constvar.InfoResult, "primary tdbctl broken-down")
-					//current break-down node is primary tdbctl
-					ins.PrimaryTdbctl.CurrentServer = 1
-					ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("get route from secondary tdbctl[%s#%d]",
-						cmdbIns.IP, cmdbIns.AdminPort))
-				} else {
-					ins.ReportLogs(constvar.InfoResult, "non-primary tdbctl broken-down")
-					//current break-down node is not primary
-					ins.PrimaryTdbctl.CurrentServer = 0
-					if primaryTdbctl.CurrentServer != 1 {
-						//current connected tdbctl not primary tdbctl, close and connect to real primary
-						_ = currentConn.Close()
-						ins.ReportLogs(constvar.InfoResult, "try to connect real primary tdbctl and get route")
-						connParam = fmt.Sprintf("%s:%s@(%s:%d)/%s",
-							dbConf.User, dbConf.Pass, ins.PrimaryTdbctl.Host,
-							ins.PrimaryTdbctl.Port, constvar.DefaultDatabase)
-						if primaryConn, err = dbutil.ConnMySQL(connParam); err != nil {
-							return fmt.Errorf("connect primary tdbctl[%s#%d] failed:%s",
-								ins.PrimaryTdbctl.Host, ins.PrimaryTdbctl.Port, err.Error())
-						}
-					}
-				}
-
-				if ins.RouteTable, err = ins.QueryRouteInfo(primaryConn); err != nil {
-					_ = primaryConn.Close()
-					return fmt.Errorf("get all route info failed:%s", err.Error())
-				}
-				_ = primaryConn.Close()
-				break
-			}
-		}
-	}
-
-	if !foundPrimary {
-		return fmt.Errorf("no appropriate primary tdbctl found")
-	}
-
-	ins.ReportLogs(constvar.InfoResult, "found route, primary tdbctl success")
-
-	return nil
-}
-
-// GetRouteInfo get route info from route table by ip,port
-func (ins *SpiderCommonSwitch) GetRouteInfo(host string, port int) *RouteInfo {
+// GetNodeRoute get route info from route table by ip,port
+func (ins *SpiderCommonSwitch) GetNodeRoute(host string, port int) *RouteInfo {
 	for _, node := range ins.RouteTable {
 		if node.Host == host && node.Port == port {
 			return &node
@@ -786,20 +776,40 @@ func (ins *SpiderCommonSwitch) QueryRouteInfo(db *sql.DB) ([]RouteInfo, error) {
 	return routeTable, nil
 }
 
-func (ins *SpiderCommonSwitch) ConnectPrimaryTdbctl() (*sql.DB, error) {
-	mysqlConf := ins.Config.DBConf.MySQL
-	connParam := fmt.Sprintf("%s:%s@(%s:%d)/%s",
-		mysqlConf.User, mysqlConf.Pass, ins.PrimaryTdbctl.Host, ins.PrimaryTdbctl.Port, constvar.DefaultDatabase)
-	primaryConn, err := dbutil.ConnMySQL(connParam)
+// QueryNodesInfo query nodes info from information_schema.TDBCTL_NODES
+func (ins *SpiderCommonSwitch) QueryNodesInfo(db *sql.DB) (map[string]TdbctlNodes, error) {
+	nodesInfo := make(map[string]TdbctlNodes, 0)
+	ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("try to execute sql[%s]", GetNodeSQL))
+	rows, err := db.Query(GetNodeSQL)
 	if err != nil {
-		return nil, fmt.Errorf("connect primary tdbctl failed:%s", err.Error())
+		return nil, err
 	}
-	return primaryConn, nil
+	for rows.Next() {
+		node := TdbctlNodes{}
+		if err = rows.Scan(&node.ServerName, &node.Host, &node.Port,
+			&node.ReplicationMaster, &node.ClusterRole, &node.Status,
+			&node.Message, &node.ReplicationInfo); err != nil {
+			return nil, fmt.Errorf("query tdbctl_nodes failed:%s", err.Error())
+		}
+		nodesInfo[node.ServerName] = node
+	}
+	if len(nodesInfo) == 0 {
+		return nil, fmt.Errorf("no node info found")
+	}
+	log.Logger.Debugf("node info:%s", util.GraceStructString(nodesInfo))
+	ins.ReportLogs(constvar.InfoResult, "get node info success")
+
+	return nodesInfo, nil
 }
 
 // RemoveNodeFromRoute connect primary node and remove input node's route
 func (ins *SpiderCommonSwitch) RemoveNodeFromRoute(primaryConn *sql.DB, host string, port int) error {
-	routeInfo := ins.GetRouteInfo(host, port)
+	routeInfo := ins.GetNodeRoute(host, port)
+	if routeInfo == nil {
+		ins.ReportLogs(constvar.WarnResult, fmt.Sprintf("no route info found for instance[%s#%d]",
+			host, port))
+		return nil
+	}
 	dropSQL := fmt.Sprintf(DropNodeFormat, routeInfo.ServerName)
 	if result, err := primaryConn.Exec(dropSQL); err != nil {
 		return fmt.Errorf("execute[%s] failed:%s", dropSQL, err.Error())
@@ -807,6 +817,128 @@ func (ins *SpiderCommonSwitch) RemoveNodeFromRoute(primaryConn *sql.DB, host str
 		if rowCnt, _ := result.RowsAffected(); rowCnt != 1 {
 			//TODO: current tdbctl server's rowsAffected incorrect. Next version, should return error instead
 			log.Logger.Warnf("execute[%s] failed, rowsAffected num :%d", dropSQL, rowCnt)
+		}
+	}
+
+	return nil
+}
+
+// GetPrimary found primary node from any connected tdbctl node's route table
+// If no primary found, return error.
+// Any blow condition could get primary success
+//  1. There is only one node: PrimaryRole, StatusOnline
+//  2. No primary role found, and all alive SecondaryRole node's ReplicationMaster are the same,
+//     then thought the ReplicationMaster must be the Primary node's ServerName
+func (ins *SpiderCommonSwitch) GetPrimary() error {
+	replicaServer := ""
+	for _, spider := range ins.SpiderNodes {
+		//only spider-master had tdbctl node, and should connect use admin port
+		if spider.Status == constvar.UNAVAILABLE ||
+			spider.SpiderRole == constvar.TenDBClusterProxySlave {
+			continue
+		}
+
+		//try to connect a tdbctl node, and get primary tdbctl
+		ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("try to connect tdbctl[%s#%d] and get primary",
+			spider.IP, spider.AdminPort))
+		if currentConn, connErr := ins.ConnectInstance(spider.IP, spider.AdminPort); connErr != nil {
+			//connect failed, try another
+			ins.ReportLogs(constvar.WarnResult, fmt.Sprintf("connect tdbctl[%s#%d] failed:%s, retry others",
+				spider.IP, spider.AdminPort, connErr.Error()))
+			continue
+		} else {
+			ins.ReportLogs(constvar.WarnResult, fmt.Sprintf("connect tdbctl[%s#%d] success",
+				spider.IP, spider.AdminPort))
+			//TODO: gorm bug? must use sql.DB instead here
+			//get primary tdbctl from connected tdbctl
+
+			nodeMaps, err := ins.QueryNodesInfo(currentConn)
+			if err != nil {
+				ins.ReportLogs(constvar.WarnResult, "get all tdbctl node info failed, try other nodes")
+			} else {
+				for _, node := range nodeMaps {
+					ins.ReportLogs(constvar.InfoResult,
+						fmt.Sprintf("try to check node:%s", util.GraceStructString(node)))
+					if strings.EqualFold(node.Status, StatusOnline) &&
+						strings.EqualFold(node.ClusterRole, PrimaryRole) {
+						if ins.PrimaryTdbctl != nil {
+							ins.ReportLogs(constvar.FailResult, fmt.Sprintf("multi primary node [%s#%d] and [%s#%d] found",
+								ins.PrimaryTdbctl.Host, ins.PrimaryTdbctl.Port, node.Host, node.Port))
+							return fmt.Errorf("multi primary node found")
+						}
+						ins.PrimaryTdbctl = &TdbctlInfo{
+							ServerName:    node.ServerName,
+							Host:          node.Host,
+							Port:          node.Port,
+							CurrentServer: 0,
+						}
+						if ins.Ip == node.Host {
+							return fmt.Errorf("broken-down node is primary, but its status is %s", StatusOnline)
+						}
+					}
+					if strings.EqualFold(node.ClusterRole, SecondaryRole) {
+						if replicaServer == "" {
+							replicaServer = node.ReplicationMaster
+						}
+						if replicaServer != "" && replicaServer != node.ReplicationMaster {
+							ins.ReportLogs(constvar.FailResult, fmt.Sprintf("multi ReplicationMaster found[%s,%s]",
+								node.ReplicationMaster, node.ServerName))
+							return fmt.Errorf("multi ReplicationMaster found")
+						}
+					}
+				}
+				//after scan all nodes in route table, if no primary node found,
+				//maybe primary node broken-down. And the replicaServer must be the primary
+				//node's ServerName, choose it
+				if replicaServer != "" && ins.PrimaryTdbctl == nil {
+					ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("primary node's server name is %s",
+						replicaServer))
+					primaryNode := nodeMaps[replicaServer]
+					ins.PrimaryTdbctl = &TdbctlInfo{
+						ServerName:    primaryNode.ServerName,
+						Host:          primaryNode.Host,
+						Port:          primaryNode.Port,
+						CurrentServer: 0,
+					}
+					if primaryNode.Host == ins.Ip {
+						ins.ReportLogs(constvar.InfoResult, "current broken-down node is primary")
+						ins.PrimaryTdbctl.CurrentServer = 1
+					}
+				}
+				break
+			}
+		}
+	}
+
+	if ins.PrimaryTdbctl == nil {
+		return fmt.Errorf("no primary node found")
+	}
+
+	ins.ReportLogs(constvar.WarnResult, fmt.Sprintf("get primary node[%s#%d] success",
+		ins.PrimaryTdbctl.Host, ins.PrimaryTdbctl.Port))
+
+	return nil
+}
+
+// SetSpiderNodes get all spider nodes from dbmeta
+func (ins *SpiderCommonSwitch) SetSpiderNodes() error {
+	cmdbClient := client.NewCmDBClient(&ins.Config.DBConf.CMDB, ins.Config.GetCloudId())
+	rawData, err := cmdbClient.GetDBInstanceInfoByCluster(ins.ClusterName)
+	if err != nil {
+		return fmt.Errorf("get all cluster instance info failed:%s", err.Error())
+	}
+
+	for _, v := range rawData {
+		cmdbIns := dbutil.DBInstanceInfoDetail{}
+		rawIns, jsonErr := json.Marshal(v)
+		if jsonErr != nil {
+			return fmt.Errorf("get cmdb instance info failed:%s", jsonErr.Error())
+		}
+		if jsonErr = json.Unmarshal(rawIns, &cmdbIns); jsonErr != nil {
+			return fmt.Errorf("get cmdb instance info failed:%s", jsonErr.Error())
+		}
+		if cmdbIns.MachineType == constvar.TenDBClusterProxyType {
+			ins.SpiderNodes = append(ins.SpiderNodes, cmdbIns)
 		}
 	}
 

@@ -391,6 +391,7 @@ const (
 // NB: Any adjustments need to be notified to the front-end developer
 const (
 	InfoResult    = "info"
+	WarnResult    = "warn"
 	FailResult    = "failed"
 	SuccessResult = "success"
 )

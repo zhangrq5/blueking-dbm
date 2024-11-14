@@ -106,7 +106,7 @@ func (ins *MySQLSwitch) DoSwitch() error {
 	ins.ReportLogs(constvar.InfoResult, "all proxy flush backends to 1.1.1.1 success")
 
 	ins.ReportLogs(constvar.InfoResult, "try to reset slave")
-	binlogFile, binlogPosition, err := ins.ResetSlave()
+	binlogFile, binlogPosition, err := ins.ResetSlaveExtend(ins.StandBySlave.Ip, ins.StandBySlave.Port)
 	if err != nil {
 		ins.ReportLogs(constvar.FailResult, fmt.Sprintf("reset slave failed:%s", err.Error()))
 		return fmt.Errorf("reset slave failed")

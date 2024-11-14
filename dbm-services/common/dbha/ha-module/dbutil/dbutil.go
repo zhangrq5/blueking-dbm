@@ -4,9 +4,12 @@ package dbutil
 import (
 	"database/sql"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
+	"github.com/pkg/errors"
 
 	"dbm-services/common/dbha/ha-module/log"
+
+	_ "github.com/go-sql-driver/mysql"
 )
 
 // ConnMySQL connParam format: user:password@(ip:port)/dbName, %s:%s@(%s:%d)/%s
@@ -18,4 +21,13 @@ func ConnMySQL(connParam string) (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+// GetMySQLErrorCode return 0 for success
+func GetMySQLErrorCode(err error) uint16 {
+	var sqlErr *mysql.MySQLError
+	if errors.As(err, &sqlErr) {
+		return sqlErr.Number
+	}
+	return 0
 }
