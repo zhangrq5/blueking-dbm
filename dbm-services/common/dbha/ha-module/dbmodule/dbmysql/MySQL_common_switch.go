@@ -359,7 +359,7 @@ func (ins *MySQLCommonSwitch) CheckSlaveStatus() error {
 		slaveDelay, gmConf.GCM.AllowedSlaveDelayMax))
 
 	if timeDelay >= gmConf.GCM.AllowedTimeDelayMax {
-		return fmt.Errorf("IO_Thread delay on slave too large than master(%d >= %d)", timeDelay,
+		return fmt.Errorf("heartbeat delay on slave too large than master(%d >= %d)", timeDelay,
 			gmConf.GCM.AllowedTimeDelayMax)
 	}
 	ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("IO_Thread delay [%d] in allowed range[%d]",
@@ -526,7 +526,7 @@ func (ins *MySQLCommonSwitch) CheckSlaveSlow(ignoreDelay bool) error {
 	}
 
 	binlogSizeMByte := maxBinlogSize.VariableValue / (1024 * 1024)
-	log.Logger.Infof("the slave max_binlog_size value is %d M!", binlogSizeMByte)
+	log.Logger.Infof("the slave max_binlog_size value is %dM!", binlogSizeMByte)
 
 	status, err := GetSlaveStatus(db)
 	if err != nil {

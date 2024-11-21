@@ -19,8 +19,8 @@ type HASwitchQueue struct {
 	Uid                int64      `gorm:"column:uid;type:bigint;primary_key;AUTO_INCREMENT" json:"uid,omitempty"`
 	CheckID            int64      `gorm:"column:check_id;type:bigint;" json:"check_id,omitempty"`
 	App                string     `gorm:"column:app;type:varchar(32);index:idx_app_ip_port" json:"app,omitempty"`
-	IP                 string     `gorm:"column:ip;type:varchar(32);index:idx_app_ip_port;NOT NULL" json:"ip,omitempty"`
-	Port               int        `gorm:"column:port;type:int(11);index:idx_app_ip_port;NOT NULL" json:"port,omitempty"`
+	IP                 string     `gorm:"column:ip;type:varchar(32);uniqueIndex:uniq_ip_port_hashid;index:idx_app_ip_port;NOT NULL" json:"ip,omitempty"`
+	Port               int        `gorm:"column:port;type:int(11);uniqueIndex:uniq_ip_port_hashid;index:idx_app_ip_port;NOT NULL" json:"port,omitempty"`
 	ConfirmCheckTime   *time.Time `gorm:"column:confirm_check_time;type:datetime;default:CURRENT_TIMESTAMP" json:"confirm_check_time,omitempty"`
 	DbRole             string     `gorm:"column:db_role;type:varchar(32);NOT NULL" json:"db_role,omitempty"`
 	SlaveIP            string     `gorm:"column:slave_ip;type:varchar(32)" json:"slave_ip,omitempty"`
@@ -35,6 +35,7 @@ type HASwitchQueue struct {
 	IdcID              int        `gorm:"column:idc_id;type:int(11)" json:"idc_id,omitempty"`
 	CloudID            int        `gorm:"column:cloud_id;type:int(11);default:0" json:"cloud_id,omitempty"`
 	Cluster            string     `gorm:"column:cluster;type:varchar(64)" json:"cluster,omitempty"`
+	SwitchHashID       uint32     `gorm:"column:switch_hash_id;type:bigint;uniqueIndex:uniq_ip_port_hashid" json:"switch_hash_id,omitempty"`
 }
 
 // TableName TODO

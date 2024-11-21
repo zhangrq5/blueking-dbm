@@ -68,7 +68,7 @@ func TestAgentNetTransfor(t *testing.T) {
 		case 3:
 			dbIns.App = "APP4444"
 		}
-		err = agentIns.ReporterDetectInfo(d)
+		err = agentIns.ReportDetectInfoToGM(d)
 		if err != nil {
 			t.Errorf("reporter gmInfo failed.err:%s", err.Error())
 			return

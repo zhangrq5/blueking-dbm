@@ -1,6 +1,7 @@
 package gm
 
 import (
+	"dbm-services/common/dbha/ha-module/util"
 	"dbm-services/common/dbha/hadb-api/model"
 	"fmt"
 	"time"
@@ -205,6 +206,8 @@ func (gcm *GCM) InsertSwitchQueue(instance dbutil.DataBaseSwitch) error {
 			SwitchStartTime:  &currentTime,
 			DbRole:           instance.GetRole(),
 			ConfirmResult:    doubleCheckInfo,
+			SwitchHashID: util.GenerateHash(fmt.Sprintf("%#%d", ip, port),
+				int64(max(300, gcm.Conf.GMConf.ReportInterval))),
 		},
 	}
 

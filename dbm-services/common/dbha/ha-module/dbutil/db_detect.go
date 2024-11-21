@@ -3,6 +3,7 @@ package dbutil
 import (
 	"bytes"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"strings"
 	"time"
@@ -58,7 +59,8 @@ type DataBaseDetect interface {
 	// Serialization agent call this to serializa instance info, and then send to gdm
 	Serialization() ([]byte, error)
 
-	NeedReporter() bool
+	//NeedReportAgent detect info need report to ha_agent_logs
+	NeedReportAgent() bool
 	GetDBType() types.DBType
 	// GetDetectType agent send detect type to gm, gm use this key to find callback func
 	GetDetectType() string
@@ -68,15 +70,16 @@ type DataBaseDetect interface {
 	GetCluster() string
 	GetClusterType() string
 	GetClusterId() int
-	UpdateReporterTime()
+	UpdateReportTime()
 }
 
 // BaseDetectDB db detect base struct
 type BaseDetectDB struct {
-	Ip             string
-	Port           int
-	App            string
-	DBType         types.DBType
+	Ip     string
+	Port   int
+	App    string
+	DBType types.DBType
+	//time for report ha_agent_logs
 	ReporterTime   time.Time
 	ReportInterval int
 	Status         types.CheckStatus
@@ -261,22 +264,32 @@ func (b *BaseDetectDB) DoSSHForWindows(shellStr string) error {
 	return nil
 }
 
-// NeedReporter decide whether need report detect result to HADB
-func (b *BaseDetectDB) NeedReporter() bool {
-	var need bool
-	if b.Status == constvar.DBCheckSuccess {
-		now := time.Now()
-		if now.After(b.ReporterTime.Add(time.Second * time.Duration(b.ReportInterval))) {
-			need = true
-		} else {
-			need = false
-		}
-		// log.Logger.Debugf("now time:%s, reporter time:%s, reporter interval:%d, need:%s",
-		// 	now.String(), b.ReporterTime.String(), b.ReportInterval, need)
-	} else {
-		need = true
+// NeedReportAgent decides whether to report the detect result to ha_agent_logs
+func (b *BaseDetectDB) NeedReportAgent() bool {
+	// 获取当前时间
+	now := time.Now()
+
+	// 如果状态不是成功，则立即上报
+	if b.Status != constvar.DBCheckSuccess {
+		return true
 	}
-	return need
+
+	// 如果距离上次上报已经超过1分钟，则必须上报
+	if now.After(b.ReporterTime.Add(time.Minute)) {
+		return true
+	}
+
+	// 否则，计算30秒内的随机延迟
+	randomDelay := time.Duration(rand.Intn(30)) * time.Second
+	randomReportTime := b.ReporterTime.Add(time.Second * time.Duration(b.ReportInterval)).Add(randomDelay)
+
+	// 如果当前时间超过随机的上报时间，触发上报
+	if now.After(randomReportTime) {
+		return true
+	}
+
+	// 否则不需要上报
+	return false
 }
 
 // GetAddress return instance's ip, port
@@ -320,8 +333,8 @@ func (b *BaseDetectDB) GetClusterType() string {
 	return b.ClusterType
 }
 
-// UpdateReporterTime update report info
-func (b *BaseDetectDB) UpdateReporterTime() {
+// UpdateReportTime update report ha_agent_logs time
+func (b *BaseDetectDB) UpdateReportTime() {
 	b.ReporterTime = time.Now()
 }
 

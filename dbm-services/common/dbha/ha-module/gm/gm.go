@@ -11,12 +11,6 @@ import (
 	"dbm-services/common/dbha/ha-module/log"
 )
 
-// InstanceKey instance key info
-type InstanceKey struct {
-	Ip   string
-	Port int
-}
-
 // DoubleCheckInstanceInfo double check instance info
 type DoubleCheckInstanceInfo struct {
 	AgentIp      string
@@ -26,7 +20,7 @@ type DoubleCheckInstanceInfo struct {
 	ConfirmTime  time.Time
 	//double check result
 	ResultInfo string
-	//gmm double check id
+	//gmm double check id, ha_gm_logs's uid
 	CheckID int64
 }
 

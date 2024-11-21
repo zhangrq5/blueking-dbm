@@ -52,9 +52,9 @@ func TestDetectionSuccess(t *testing.T) {
 			t.Errorf("detection failed.err:%s", err.Error())
 		}
 		fmt.Printf("status: %s\n", d.GetStatus())
-		if d.NeedReporter() {
+		if d.NeedReportAgent() {
 			fmt.Println("need reporter")
-			d.UpdateReporterTime()
+			d.UpdateReportTime()
 		} else {
 			fmt.Println("needn't reporter")
 		}

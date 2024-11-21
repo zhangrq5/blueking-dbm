@@ -239,7 +239,7 @@ func (c *HaDBClient) ReportDBStatus(app, agentIp, ip string, port int, dbType, s
 	return nil
 }
 
-// ReportHaLogRough report ha logs
+// ReportHaLogRough report ha logs without return
 func (c *HaDBClient) ReportHaLogRough(monIP, app, ip string, port int, module, comment string) {
 	_, _ = c.ReportHaLog(monIP, app, ip, port, module, comment)
 }

@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"hash/crc32"
+	"hash/fnv"
 	"net"
 	"os/exec"
 	"reflect"
@@ -73,11 +73,6 @@ func HostCheck(host string) bool {
 	return true
 }
 
-// CRC32 TODO
-func CRC32(str string) uint32 {
-	return crc32.ChecksumIEEE([]byte(str))
-}
-
 // CheckRedisErrIsAuthFail check if the return error of
 //
 //	redis api is authentication failure,
@@ -96,7 +91,7 @@ func CheckRedisErrIsAuthFail(err error) bool {
 	return false
 }
 
-// CheckSSHErrIsAuthFail check if the the return error of ssh api
+// CheckSSHErrIsAuthFail check if the ssh return error of ssh api
 //
 //	is authentication failure.
 func CheckSSHErrIsAuthFail(err error) bool {
@@ -156,4 +151,21 @@ func GraceStructString(v interface{}) string {
 		return ""
 	}
 	return string(data)
+}
+
+// GenerateHash generates a consistent hash value for a given factor within a specified time window (in seconds).
+func GenerateHash(factor string, timeWindow int64) uint32 {
+	// Get the current Unix timestamp
+	now := time.Now().Unix()
+
+	// Calculate the start of the time window
+	windowStart := now - (now % timeWindow)
+
+	// Combine the factor and windowStart into a single input string
+	input := fmt.Sprintf("%s:%d", factor, windowStart)
+
+	// Use FNV-1a to hash the input string
+	hasher := fnv.New32a()
+	_, _ = hasher.Write([]byte(input))
+	return hasher.Sum32()
 }

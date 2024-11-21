@@ -16,7 +16,7 @@ type GDM struct {
 	AgentChan     chan DoubleCheckInstanceInfo
 	GMMChan       chan DoubleCheckInstanceInfo
 	ListenPort    int
-	ReporterCache map[InstanceKey]*DoubleCheckInstanceInfo
+	ReporterCache map[string]*DoubleCheckInstanceInfo
 	cacheMutex    sync.Mutex
 	DupExpire     int
 	ScanInterval  int
@@ -31,7 +31,7 @@ func NewGDM(conf *config.Config, ch chan DoubleCheckInstanceInfo,
 		AgentChan:     make(chan DoubleCheckInstanceInfo, 10),
 		GMMChan:       ch,
 		ListenPort:    conf.GMConf.ListenPort,
-		ReporterCache: map[InstanceKey]*DoubleCheckInstanceInfo{},
+		ReporterCache: map[string]*DoubleCheckInstanceInfo{},
 		cacheMutex:    sync.Mutex{},
 		DupExpire:     conf.GMConf.GDM.DupExpire,
 		ScanInterval:  conf.GMConf.GDM.ScanInterval,
@@ -127,19 +127,13 @@ func (gdm *GDM) isReporterRecently(ins *DoubleCheckInstanceInfo) bool {
 	ip, port := ins.db.GetAddress()
 	gdm.cacheMutex.Lock()
 	defer gdm.cacheMutex.Unlock()
-	cache, ok := gdm.ReporterCache[InstanceKey{
-		ip,
-		port,
-	}]
+	cache, ok := gdm.ReporterCache[ip]
 	if ok && cache.db.GetStatus() == ins.db.GetStatus() {
 		log.Logger.Infof("instance[%s#%d] cached, skip report", ip, port)
 		return true
 	}
 	// 刷新缓存
-	gdm.ReporterCache[InstanceKey{
-		ip,
-		port,
-	}] = ins
+	gdm.ReporterCache[ip] = ins
 	return false
 }
 
@@ -161,10 +155,7 @@ func (gdm *GDM) flushCache() {
 func (gdm *GDM) InstanceSwitchDone(ip string, port int, dbType string) {
 	gdm.cacheMutex.Lock()
 	defer gdm.cacheMutex.Unlock()
-	cache, ok := gdm.ReporterCache[InstanceKey{
-		ip,
-		port,
-	}]
+	cache, ok := gdm.ReporterCache[ip]
 	if !ok {
 		log.Logger.Warnf(
 			"ip:%s, port:%d, dbtype:%s switch done, but cache not exist", ip, port, dbType)
