@@ -33,10 +33,10 @@
             "agg_interval": 60,
             "agg_dimension": [
               "bk_cloud_id",
-              "cluster",
+              "cluster_domain",
               "idc",
               "machine_type",
-              "role",
+              "instance_role",
               "server_ip",
               "server_port",
               "status",

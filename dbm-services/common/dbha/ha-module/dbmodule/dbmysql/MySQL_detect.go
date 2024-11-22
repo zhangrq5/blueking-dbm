@@ -27,6 +27,7 @@ const (
 // 1040:ER_CON_COUNT_ERROR
 // 1044:ER_DBACCESS_DENIED_ERROR
 // 1045:ER_ACCESS_DENIED_ERROR
+// 1226:ER_USER_LIMIT_REACHED
 var IgnoreErrorNumber = []uint16{1040, 1044, 1045}
 
 // MySQLDetectInstance mysql instance detect struct

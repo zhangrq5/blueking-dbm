@@ -34,7 +34,7 @@
             "agg_dimension": [
               "cluster_type",
               "appid",
-              "cluster",
+              "cluster_domain",
               "server_ip",
               "server_port",
               "machine_type"

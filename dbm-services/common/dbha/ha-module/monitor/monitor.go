@@ -109,12 +109,12 @@ func MonitorSend(content string, info MonitorInfo) error {
 	addDimension := make(map[string]interface{})
 	if info.MonitorInfoType == constvar.MonitorInfoSwitch {
 		// switch monitor information dimension add
-		addDimension["role"] = info.Switch.Role
+		addDimension["instance_role"] = info.Switch.Role
 		addDimension["appid"] = info.Switch.Bzid
 		addDimension["server_ip"] = info.Switch.ServerIp
 		addDimension["server_port"] = info.Switch.ServerPort
 		addDimension["status"] = info.Switch.Status
-		addDimension["cluster"] = info.Switch.Cluster
+		addDimension["cluster_domain"] = info.Switch.Cluster
 		addDimension["machine_type"] = info.Switch.MachineType
 		addDimension["idc"] = info.Switch.IDC
 		addDimension["double_check_id"] = info.Switch.CheckID
@@ -133,7 +133,7 @@ func MonitorSend(content string, info MonitorInfo) error {
 		addDimension["server_ip"] = info.Detect.ServerIp
 		addDimension["server_port"] = info.Detect.ServerPort
 		addDimension["status"] = info.Detect.Status
-		addDimension["cluster"] = info.Detect.Cluster
+		addDimension["cluster_domain"] = info.Detect.Cluster
 		addDimension["machine_type"] = info.Detect.MachineType
 		addDimension["cluster_type"] = info.Detect.ClusterType
 	} else if info.MonitorInfoType == constvar.MonitorInfoGlobal {
