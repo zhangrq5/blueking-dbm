@@ -147,12 +147,13 @@ func (a *MonitorAgent) RefreshInstanceCache() {
 // DoDetectSingle do single instance detect
 func (a *MonitorAgent) DoDetectSingle(ins dbutil.DataBaseDetect) {
 	ip, port := ins.GetAddress()
-	log.Logger.Debugf("begin to detect instance:%s#%d", ip, port)
+	log.Logger.Debugf("begin detect [%s] instance:%s#%d", ins.GetClusterType(), ip, port)
 	err := ins.Detection()
 	if err != nil {
 		log.Logger.Warnf("Detect db instance failed. ins:[%s:%d],dbType:%s status:%s,DeteckErr=%s",
 			ip, port, ins.GetDBType(), ins.GetStatus(), err.Error())
 	}
+	log.Logger.Debugf("finish detect [%s] instance:%s#%d", ins.GetClusterType(), ip, port)
 
 	a.reportMonitor(ins, err)
 	if ins.NeedReportAgent() {

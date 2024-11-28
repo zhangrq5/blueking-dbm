@@ -1,6 +1,7 @@
 package dbmysql
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -155,11 +156,12 @@ func (m *MySQLDetectInstance) Detection() error {
 				return nil
 			}
 		case <-time.After(time.Second * time.Duration(m.Timeout)):
-			mysqlErr = fmt.Errorf("connect MySQL timeout recheck:%d", recheck)
+			mysqlErr = fmt.Errorf("connect MySQL[%s#%d] timeout recheck:%d", m.Ip, m.Port, recheck)
 			log.Logger.Warnf(mysqlErr.Error())
 			m.Status = constvar.DBCheckFailed
 		}
 	}
+	log.Logger.Debugf("detect mysql[%s#%d] finish, try to detect ssh", m.Ip, m.Port)
 
 	sshErr := m.CheckSSH()
 	if sshErr != nil {
@@ -230,7 +232,7 @@ func (m *MySQLDetectInstance) CheckMySQL(errChan chan error) {
 }
 
 // CheckSSH use ssh check whether machine alived
-func (m *MySQLDetectInstance) CheckSSH() error {
+func (m *MySQLDetectInstance) detectSSH() error {
 	touchFile := fmt.Sprintf("%s_%s_%d", m.SshInfo.Dest, "agent", m.Port)
 
 	touchStr := fmt.Sprintf("touch %s && if [ -d \"/data1/dbha/\" ]; then touch /data1/dbha/%s ; fi "+
@@ -241,6 +243,40 @@ func (m *MySQLDetectInstance) CheckSSH() error {
 		return err
 	}
 	return nil
+}
+
+func (m *MySQLDetectInstance) CheckSSH() error {
+	sshCtx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(m.SshInfo.Timeout))
+	defer cancel()
+
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- m.detectSSH()
+	}()
+
+	select {
+	case <-sshCtx.Done():
+		err := fmt.Errorf("check ssh timeout for ip:%s, port:%d", m.Ip, m.Port)
+		log.Logger.Warnf(err.Error())
+		m.Status = constvar.SSHCheckFailed
+		return err
+	case sshErr := <-errChan:
+		if sshErr != nil {
+			if util.CheckSSHErrIsAuthFail(sshErr) {
+				m.Status = constvar.SSHAuthFailed
+				log.Logger.Warnf("check ssh auth failed. ip:%s, port:%d, app:%s, status:%s",
+					m.Ip, m.Port, m.App, m.Status)
+			} else {
+				m.Status = constvar.SSHCheckFailed
+				log.Logger.Warnf("check ssh failed. ip:%s, port:%d, app:%s, status:%s",
+					m.Ip, m.Port, m.App, m.Status)
+			}
+			return sshErr
+		}
+		log.Logger.Infof("check ssh success. ip:%s, port:%d, app:%s", m.Ip, m.Port, m.App)
+		m.Status = constvar.SSHCheckSuccess
+		return nil
+	}
 }
 
 // Serialization serialize mysql instance info
