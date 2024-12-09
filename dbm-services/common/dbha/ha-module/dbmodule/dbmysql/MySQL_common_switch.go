@@ -128,6 +128,8 @@ type MySQLVariableInfo struct {
 
 // BinlogStatus binlog status info struct
 type BinlogStatus struct {
+	MasterHost              string
+	MasterPort              int
 	MasterLogFileIndex      int
 	RelayMasterLogFileIndex int
 	ReadMasterLogPos        uint64
@@ -536,6 +538,11 @@ func (ins *MySQLCommonSwitch) CheckSlaveSlow(ignoreDelay bool) error {
 	log.Logger.Infof("Relay_Master_Log_File_Index:%d, Exec_Master_Log_Pos:%d",
 		status.RelayMasterLogFileIndex, status.ReadMasterLogPos)
 
+	if status.MasterHost != ins.Ip || status.MasterPort != ins.Port {
+		return fmt.Errorf("slave status's master info[%s#%d] not equal broken-down instance[%s#%d]",
+			status.MasterHost, status.MasterPort, ins.Ip, ins.Port)
+	}
+
 	if ignoreDelay {
 		log.Logger.Infof("ignore delay check configured, skip check replication delay")
 		return nil
@@ -614,6 +621,8 @@ func GetSlaveStatus(db *gorm.DB) (BinlogStatus, error) {
 		return BinlogStatus{}, err
 	}
 
+	ret.MasterHost = slaveStatus.MasterHost
+	ret.MasterPort = slaveStatus.MasterPort
 	ret.ReadMasterLogPos = slaveStatus.ReadMasterLogPos
 	ret.ExecMasterLogPos = slaveStatus.ExecMasterLogPos
 	// ret.RetrievedGtidSet = slaveStatus.RetrievedGtidSet
