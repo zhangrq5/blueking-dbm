@@ -1,39 +1,85 @@
 {
   "bk_biz_id": 0,
-  "name": "Doris BE Compaction Score",
+  "name": "Doris Backend Disk Usage",
   "db_type": "doris",
   "details": {
     "bk_biz_id": "",
-    "name": "Doris BE Compaction Score",
+    "name": "Doris Backend Disk Usage",
     "source": "dbm",
-    "scenario": "component",
+    "scenario": "os",
     "type": "monitor",
     "items": [
       {
-        "name": "Doris BE Compaction Score",
+        "name": "AVG(磁盘空间使用率)",
         "no_data_config": {
           "level": 2,
           "continuous": 10,
           "is_enabled": false,
-          "agg_dimension": []
+          "agg_dimension": [
+            "bk_target_ip",
+            "bk_target_cloud_id"
+          ]
         },
         "target": [],
-        "expression": "a * b",
+        "expression": "a",
         "functions": [],
         "origin_sql": "",
         "query_configs": [
           {
-            "data_source_label": "prometheus",
+            "data_source_label": "bk_monitor",
             "data_type_label": "time_series",
             "alias": "a",
-            "metric_id": "",
+            "metric_id": "bk_monitor.dbm_system.disk.in_use",
             "functions": [],
-            "promql": "avg by (app, cluster_domain, bk_target_service_instance_id, backend) (bkmonitor:pushgateway_dbm_doris_bkpull:doris_fe_tablet_max_compaction_score) * ignoring(backend) group_left avg by (app, cluster_domain, bk_target_service_instance_id) (bkmonitor:pushgateway_dbm_doris_bkpull:node_info{type=\"is_master\"})",
+            "result_table_id": "dbm_system.disk",
+            "agg_method": "AVG",
             "agg_interval": 60,
-            "name": ""
+            "agg_dimension": [
+              "bk_target_ip",
+              "bk_target_cloud_id",
+              "mount_point",
+              "appid"
+            ],
+            "agg_condition": [
+              {
+                "key": "cluster_type",
+                "value": [
+                  "doris"
+                ],
+                "method": "eq",
+                "condition": "and",
+                "dimension_name": "dbm cluster type"
+              },
+              {
+                "key": "instance_role",
+                "value": [
+                  "doris_backend_cold",
+                  "doris_backend_hot"
+                ],
+                "method": "include",
+                "condition": "and",
+                "dimension_name": "dbm_meta instance role"
+              }
+            ],
+            "metric_field": "in_use",
+            "unit": "percent",
+            "name": "磁盘空间使用率"
           }
         ],
         "algorithms": [
+          {
+            "type": "Threshold",
+            "level": 2,
+            "config": [
+              [
+                {
+                  "method": "gte",
+                  "threshold": 75
+                }
+              ]
+            ],
+            "unit_prefix": "%"
+          },
           {
             "type": "Threshold",
             "level": 1,
@@ -41,11 +87,11 @@
               [
                 {
                   "method": "gte",
-                  "threshold": 250
+                  "threshold": 80
                 }
               ]
             ],
-            "unit_prefix": ""
+            "unit_prefix": "%"
           }
         ],
         "metric_type": "time_series"
@@ -53,10 +99,10 @@
     ],
     "detects": [
       {
-        "level": 1,
+        "level": 2,
         "expression": "",
         "trigger_config": {
-          "count": 10,
+          "count": 2,
           "uptime": {
             "calendars": [],
             "time_ranges": [
@@ -66,10 +112,32 @@
               }
             ]
           },
-          "check_window": 10
+          "check_window": 5
         },
         "recovery_config": {
-          "check_window": 2,
+          "check_window": 5,
+          "status_setter": "recovery"
+        },
+        "connector": "and"
+      },
+      {
+        "level": 1,
+        "expression": "",
+        "trigger_config": {
+          "count": 2,
+          "uptime": {
+            "calendars": [],
+            "time_ranges": [
+              {
+                "end": "23:59",
+                "start": "00:00"
+              }
+            ]
+          },
+          "check_window": 5
+        },
+        "recovery_config": {
+          "check_window": 5,
           "status_setter": "recovery"
         },
         "connector": "and"
@@ -77,7 +145,7 @@
     ],
     "actions": [],
     "notice": {
-      "config_id": 48089,
+      "config_id": 48117,
       "user_groups": [],
       "user_type": "main",
       "signal": [
@@ -232,12 +300,12 @@
     "priority_group_key": "",
     "edit_allowed": true,
     "metric_type": "time_series",
-    "data_source_type": "Prometheus",
+    "data_source_type": "监控采集指标",
     "is_enabled": true
   },
   "is_enabled": true,
-  "monitor_indicator": "Doris BE Compaction Score",
-  "version": 2,
+  "monitor_indicator": "AVG(磁盘空间使用率)",
+  "version": 1,
   "alert_source": "time_series",
   "custom_conditions": [],
   "export_at": "2025-01-06T16:34:43+08:00"
